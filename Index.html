@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Breath Rate Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.0.5/dist/body-pix.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            padding-bottom: 75%;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+        video, canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            opacity: 0.7;
+            pointer-events: none;
+        }
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.1);
+            border-radius: 10px;
+            border: none;
+        }
+        #chart-container {
+            height: 280px;
+            position: relative;
+        }
+        .progress {
+            height: 24px;
+            border-radius: 12px;
+            margin: 15px 0;
+        }
+        #status {
+            font-style: italic;
+            color: #5a6268;
+            margin: 10px 0;
+            min-height: 24px;
+        }
+        .btn {
+            margin: 0 5px;
+            border-radius: 20px;
+            padding: 8px 20px;
+            font-weight: 500;
+        }
+        #roiSelector {
+            position: absolute;
+            border: 3px dashed rgba(0, 255, 0, 0.8);
+            background-color: rgba(0, 255, 0, 0.1);
+            pointer-events: none;
+            display: none;
+            z-index: 10;
+        }
+        .value-display {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .confidence-indicator {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .instructions {
+            background-color: #f0f8ff;
+            border-left: 4px solid #4a90e2;
+            padding: 15px;
+            border-radius: 0 8px 8px 0;
+        }
+        .alert {
+            border-radius: 8px;
+        }
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 25px;
+            font-weight: 600;
+        }
+        .fps-counter {
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center my-4">Advanced Breath Rate Tracker</h1>
+        
+        <div class="row">
+            <div class="col-lg-6">
+                <div class="card">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <span><i class="fas fa-video me-2"></i>Camera Feed</span>
+                        <span class="fps-counter" id="fpsCounter">0 FPS</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="video-container">
+                            <video id="video" autoplay muted playsinline></video>
+                            <canvas id="overlay"></canvas>
+                            <canvas id="canvas" style="display: none;"></canvas>
+                            <div id="roiSelector"></div>
+                        </div>
+                        <div class="text-center mt-3">
+                            <button id="startBtn" class="btn btn-primary">
+                                <i class="fas fa-play me-2"></i>Start Tracking
+                            </button>
+                            <button id="stopBtn" class="btn btn-danger" disabled>
+                                <i class="fas fa-stop me-2"></i>Stop
+                            </button>
+                            <button id="resetRoiBtn" class="btn btn-secondary">
+                                <i class="fas fa-sync-alt me-2"></i>Reset Area
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-4">
+                    <div class="card-header bg-info text-white">
+                        <i class="fas fa-info-circle me-2"></i>Instructions
+                    </div>
+                    <div class="card-body instructions">
+                        <ol class="mb-0">
+                            <li class="mb-2">Sit 1-2 meters from your camera in good lighting</li>
+                            <li class="mb-2">Click "Start Tracking" and allow camera access</li>
+                            <li class="mb-2">Drag to select your chest/stomach area (or use auto-detection)</li>
+                            <li class="mb-2">Breathe normally for 30 seconds</li>
+                            <li>View your real-time breath rate analysis</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <i class="fas fa-chart-line me-2"></i>Breathing Analysis
+                    </div>
+                    <div class="card-body">
+                        <div id="chart-container">
+                            <canvas id="breathChart"></canvas>
+                        </div>
+                        
+                        <div class="results mt-4">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <h5 class="text-muted">Current Breath Rate</h5>
+                                    <div class="value-display">
+                                        <span id="breathRate">--</span> <small>BPM</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <h5 class="text-muted">Confidence</h5>
+                                    <div class="d-flex align-items-center">
+                                        <span id="confidenceIndicator" class="confidence-indicator bg-secondary"></span>
+                                        <span id="confidence" class="value-display">--%</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div id="status" class="mb-3">
+                                <i class="fas fa-info-circle me-2"></i>Ready to start tracking
+                            </div>
+                            
+                            <div class="progress">
+                                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" 
+                                     role="progressbar" style="width: 0%">
+                                    <span id="progressText">0%</span>
+                                </div>
+                            </div>
+                            
+                            <div class="alert alert-warning mt-3" id="warningAlert" style="display: none;">
+                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                <span id="warningMessage"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-4">
+                    <div class="card-header bg-secondary text-white">
+                        <i class="fas fa-tachometer-alt me-2"></i>Signal Quality Metrics
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <h6>Signal Strength</h6>
+                                <div class="progress" style="height: 10px;">
+                                    <div id="signalStrengthBar" class="progress-bar bg-info" role="progressbar" style="width: 0%"></div>
+                                </div>
+                                <small id="signalStrengthText" class="text-muted">--</small>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <h6>Noise Level</h6>
+                                <div class="progress" style="height: 10px;">
+                                    <div id="noiseLevelBar" class="progress-bar bg-warning" role="progressbar" style="width: 0%"></div>
+                                </div>
+                                <small id="noiseLevelText" class="text-muted">--</small>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <h6>Peak Consistency</h6>
+                                <div class="progress" style="height: 10px;">
+                                    <div id="consistencyBar" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+                                </div>
+                                <small id="consistencyText" class="text-muted">--</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Main Application
+        document.addEventListener('DOMContentLoaded', async function() {
+            // DOM Elements
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('canvas');
+            const overlay = document.getElementById('overlay');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            const resetRoiBtn = document.getElementById('resetRoiBtn');
+            const roiSelector = document.getElementById('roiSelector');
+            const breathRateDisplay = document.getElementById('breathRate');
+            const statusDisplay = document.getElementById('status');
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const confidenceDisplay = document.getElementById('confidence');
+            const confidenceIndicator = document.getElementById('confidenceIndicator');
+            const fpsCounter = document.getElementById('fpsCounter');
+            const warningAlert = document.getElementById('warningAlert');
+            const warningMessage = document.getElementById('warningMessage');
+            
+            // Signal quality elements
+            const signalStrengthBar = document.getElementById('signalStrengthBar');
+            const signalStrengthText = document.getElementById('signalStrengthText');
+            const noiseLevelBar = document.getElementById('noiseLevelBar');
+            const noiseLevelText = document.getElementById('noiseLevelText');
+            const consistencyBar = document.getElementById('consistencyBar');
+            const consistencyText = document.getElementById('consistencyText');
+            
+            // App State
+            let net = null;
+            let stream = null;
+            let isTracking = false;
+            let startTime = null;
+            let dataPoints = [];
+            let filteredPoints = [];
+            let animationId = null;
+            let fps = 0;
+            let lastTimestamp = 0;
+            const trackingDuration = 30; // seconds
+            let roi = null;
+            let isSelectingRoi = false;
+            let startSelectionPoint = null;
+            let lastBreathRate = null;
+            let lastConfidence = 0;
+            let modelLoaded = false;
+            
+            // Signal processing parameters
+            const sampleRate = 10; // Samples per second
+            const minBreathRate = 6; // BPM
+            const maxBreathRate = 40; // BPM
+            let signalQuality = {
+                strength: 0,
+                noise: 0,
+                consistency: 0
+            };
+            
+            // Initialize Chart
+            const ctx = document.getElementById('breathChart').getContext('2d');
+            const breathChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Raw Signal',
+                            data: [],
+                            borderColor: 'rgba(75, 192, 192, 0.7)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                            borderWidth: 1,
+                            tension: 0.1,
+                            fill: true,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Filtered Signal',
+                            data: [],
+                            borderColor: 'rgba(255, 99, 132, 0.9)',
+                            borderWidth: 2,
+                            tension: 0.1,
+                            fill: false,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Detected Breaths',
+                            data: [],
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                            borderWidth: 2,
+                            pointRadius: 4,
+                            pointHoverRadius: 6,
+                            showLine: false,
+                            type: 'scatter'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Time (seconds)',
+                                color: '#666'
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Motion Intensity',
+                                color: '#666'
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            },
+                            suggestedMin: 0,
+                            suggestedMax: 1
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 20
+                            }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        }
+                    },
+                    animation: {
+                        duration: 0
+                    }
+                }
+            });
+            
+            // Load BodyPix model
+            async function loadModel() {
+                statusDisplay.innerHTML = '<i class="fas fa-cog fa-spin me-2"></i>Loading AI model...';
+                try {
+                    net = await bodyPix.load({
+                        architecture: 'MobileNetV1',
+                        outputStride: 16,
+                        multiplier: 0.75,
+                        quantBytes: 2
+                    });
+                    modelLoaded = true;
+                    statusDisplay.innerHTML = '<i class="fas fa-check-circle me-2 text-success"></i>Model loaded. Ready to start.';
+                    startBtn.disabled = false;
+                } catch (error) {
+                    console.error("Failed to load model:", error);
+                    statusDisplay.innerHTML = '<i class="fas fa-exclamation-triangle me-2 text-danger"></i>Failed to load AI model';
+                    showWarning("Couldn't load the AI model. Please refresh the page.");
+                }
+            }
+            
+            // Start button click handler
+            startBtn.addEventListener('click', async function() {
+                if (!modelLoaded) {
+                    showWarning("AI model is still loading. Please wait.");
+                    return;
+                }
+                
+                try {
+                    statusDisplay.innerHTML = '<i class="fas fa-cog fa-spin me-2"></i>Starting camera...';
+                    startBtn.disabled = true;
+                    
+                    stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { 
+                            width: { ideal: 640 }, 
+                            height: { ideal: 480 },
+                            facingMode: 'user',
+                            frameRate: { ideal: 30 } 
+                        } 
+                    });
+                    video.srcObject = stream;
+                    
+                    // Wait for video to be ready
+                    await new Promise((resolve) => {
+                        video.onloadedmetadata = resolve;
+                    });
+                    
+                    // Set canvas sizes
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    overlay.width = video.videoWidth;
+                    overlay.height = video.videoHeight;
+                    
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    resetRoiBtn.disabled = false;
+                    isTracking = true;
+                    startTime = Date.now();
+                    dataPoints = [];
+                    filteredPoints = [];
+                    lastTimestamp = 0;
+                    roi = null;
+                    
+                    statusDisplay.innerHTML = '<i class="fas fa-user me-2"></i>Position yourself in frame';
+                    updateProgress(0);
+                    resetSignalQuality();
+                    hideWarning();
+                    
+                    // Start processing
+                    processFrame();
+                } catch (err) {
+                    console.error("Error:", err);
+                    statusDisplay.innerHTML = '<i class="fas fa-exclamation-triangle me-2 text-danger"></i>Error accessing camera';
+                    showWarning("Couldn't access the camera. Please check permissions.");
+                    startBtn.disabled = false;
+                }
+            });
+            
+            // Stop button click handler
+            stopBtn.addEventListener('click', function() {
+                stopTracking();
+                statusDisplay.innerHTML = '<i class="fas fa-stop-circle me-2 text-info"></i>Measurement stopped';
+            });
+            
+            // ROI Selection Functions
+            function startRoiSelection(e) {
+                if (!isTracking || !modelLoaded) return;
+                
+                const rect = video.getBoundingClientRect();
+                const scaleX = video.videoWidth / rect.width;
+                const scaleY = video.videoHeight / rect.height;
+                
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+                
+                startSelectionPoint = { x, y };
+                isSelectingRoi = true;
+                
+                roiSelector.style.left = `${x}px`;
+                roiSelector.style.top = `${y}px`;
+                roiSelector.style.width = '0px';
+                roiSelector.style.height = '0px';
+                roiSelector.style.display = 'block';
+            }
+            
+            function updateRoiSelection(e) {
+                if (!isSelectingRoi || !startSelectionPoint) return;
+                
+                const rect = video.getBoundingClientRect();
+                const scaleX = video.videoWidth / rect.width;
+                const scaleY = video.videoHeight / rect.height;
+                
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+                
+                const width = x - startSelectionPoint.x;
+                const height = y - startSelectionPoint.y;
+                
+                roiSelector.style.width = `${Math.abs(width)}px`;
+                roiSelector.style.height = `${Math.abs(height)}px`;
+                
+                if (width < 0) {
+                    roiSelector.style.left = `${x}px`;
+                }
+                if (height < 0) {
+                    roiSelector.style.top = `${y}px`;
+                }
+            }
+            
+            function endRoiSelection(e) {
+                if (!isSelectingRoi || !startSelectionPoint) return;
+                
+                const rect = video.getBoundingClientRect();
+                const scaleX = video.videoWidth / rect.width;
+                const scaleY = video.videoHeight / rect.height;
+                
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+                
+                const minX = Math.min(startSelectionPoint.x, x);
+                const minY = Math.min(startSelectionPoint.y, y);
+                const width = Math.abs(x - startSelectionPoint.x);
+                const height = Math.abs(y - startSelectionPoint.y);
+                
+                // Set minimum ROI size
+                if (width < 40 || height < 40) {
+                    resetRoi();
+                    return;
+                }
+                
+                roi = {
+                    x: minX,
+                    y: minY,
+                    width,
+                    height
+                };
+                
+                isSelectingRoi = false;
+                startSelectionPoint = null;
+                statusDisplay.innerHTML = '<i class="fas fa-lungs me-2"></i>Tracking breathing movements...';
+                
+                // Auto-center and adjust ROI if it's very large
+                if (width > video.videoWidth * 0.4 || height > video.videoHeight * 0.4) {
+                    const newWidth = Math.min(width, video.videoWidth * 0.3);
+                    const newHeight = Math.min(height, video.videoHeight * 0.3);
+                    roi = {
+                        x: roi.x + (roi.width - newWidth) / 2,
+                        y: roi.y + (roi.height - newHeight) / 2,
+                        width: newWidth,
+                        height: newHeight
+                    };
+                    updateRoiDisplay();
+                }
+            }
+            
+            function updateRoiDisplay() {
+                roiSelector.style.left = `${roi.x}px`;
+                roiSelector.style.top = `${roi.y}px`;
+                roiSelector.style.width = `${roi.width}px`;
+                roiSelector.style.height = `${roi.height}px`;
+                roiSelector.style.display = 'block';
+            }
+            
+            function resetRoi() {
+                roi = null;
+                roiSelector.style.display = 'none';
+                isSelectingRoi = false;
+                startSelectionPoint = null;
+                if (isTracking) {
+                    statusDisplay.innerHTML = '<i class="fas fa-arrows-alt me-2"></i>Select your chest/stomach area';
+                }
+            }
+            
+            resetRoiBtn.addEventListener('click', resetRoi);
+            
+            // Event listeners for ROI selection
+            video.addEventListener('mousedown', startRoiSelection);
+            video.addEventListener('mousemove', updateRoiSelection);
+            video.addEventListener('mouseup', endRoiSelection);
+            video.addEventListener('mouseleave', function() {
+                if (isSelectingRoi) {
+                    resetRoi();
+                }
+            });
+            
+            // Main processing function
+            async function processFrame() {
+                if (!isTracking) return;
+                
+                const now = Date.now();
+                
+                // Calculate FPS
+                if (lastTimestamp > 0) {
+                    fps = 1000 / (now - lastTimestamp);
+                    fpsCounter.textContent = `${Math.round(fps)} FPS`;
+                }
+                lastTimestamp = now;
+                
+                // Update progress
+                const elapsed = (now - startTime) / 1000;
+                const progressPercent = Math.min(100, (elapsed / trackingDuration) * 100);
+                updateProgress(progressPercent);
+                
+                // Check if we've collected enough data
+                if (elapsed >= trackingDuration) {
+                    await calculateBreathRate();
+                    stopTracking();
+                    progressBar.classList.remove('bg-primary');
+                    progressBar.classList.add('bg-success');
+                    statusDisplay.innerHTML = '<i class="fas fa-check-circle me-2 text-success"></i>Measurement complete!';
+                    return;
+                }
+                
+                // Process frame
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                try {
+                    // Get segmentation from BodyPix (only every few frames for performance)
+                    const segmentation = await net.segmentPerson(canvas, {
+                        flipHorizontal: false,
+                        internalResolution: 'medium',
+                        segmentationThreshold: 0.7,
+                        maxDetections: 1
+                    });
+                    
+                    // Draw segmentation overlay
+                    drawBodySegmentation(segmentation);
+                    
+                    // If we have ROI, analyze that specific area
+                    if (roi) {
+                        await analyzeRoi(segmentation, elapsed);
+                    } else if (elapsed > 3) {
+                        // Try to auto-detect torso after 3 seconds
+                        autoDetectTorso(segmentation);
+                    }
+                    
+                    // Continue processing
+                    animationId = requestAnimationFrame(processFrame);
+                } catch (error) {
+                    console.error("Processing error:", error);
+                    animationId = requestAnimationFrame(processFrame);
+                }
+            }
+            
+            // Draw body segmentation overlay
+            function drawBodySegmentation(segmentation) {
+                const overlayCtx = overlay.getContext('2d');
+                const mask = bodyPix.toMask(segmentation);
+                
+                // Clear previous overlay
+                overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+                
+                // Draw body mask with transparency
+                overlayCtx.globalAlpha = 0.5;
+                overlayCtx.putImageData(mask, 0, 0);
+                overlayCtx.globalAlpha = 1.0;
+                
+                // Draw ROI if set
+                if (roi) {
+                    overlayCtx.strokeStyle = '#00ff00';
+                    overlayCtx.lineWidth = 2;
+                    overlayCtx.strokeRect(roi.x, roi.y, roi.width, roi.height);
+                }
+            }
+            
+            // Auto-detect torso area
+            function autoDetectTorso(segmentation) {
+                if (roi || !segmentation.allPoses || segmentation.allPoses.length === 0) return;
+                
+                const pose = segmentation.allPoses[0];
+                const leftShoulder = pose.keypoints.find(k => k.part === 'leftShoulder');
+                const rightShoulder = pose.keypoints.find(k => k.part === 'rightShoulder');
+                const leftHip = pose.keypoints.find(k => k.part === 'leftHip');
+                const rightHip = pose.keypoints.find(k => k.part === 'rightHip');
+                
+                if (leftShoulder && rightShoulder && leftHip && rightHip && 
+                    leftShoulder.score > 0.3 && rightShoulder.score > 0.3 &&
+                    leftHip.score > 0.3 && rightHip.score > 0.3) {
+                    
+                    const torsoWidth = rightShoulder.position.x - leftShoulder.position.x;
+                    const torsoHeight = leftHip.position.y - leftShoulder.position.y;
+                    
+                    // Set ROI to cover middle portion of torso
+                    roi = {
+                        x: leftShoulder.position.x,
+                        y: leftShoulder.position.y + torsoHeight * 0.2,
+                        width: torsoWidth,
+                        height: torsoHeight * 0.6
+                    };
+                    
+                    updateRoiDisplay();
+                    statusDisplay.innerHTML = '<i class="fas fa-lungs me-2"></i>Auto-detected chest area. Adjust if needed.';
+                }
+            }
+            
+            // Analyze the selected ROI
+            async function analyzeRoi(segmentation, elapsedTime) {
+                const ctx = canvas.getContext('2d');
+                const imageData = ctx.getImageData(roi.x, roi.y, roi.width, roi.height);
+                
+                // Create a mask for the ROI
+                const mask = new Uint8Array(roi.width * roi.height);
+                let bodyPixelCount = 0;
+                
+                for (let y = 0; y < roi.height; y++) {
+                    for (let x = 0; x < roi.width; x++) {
+                        const segX = Math.min(roi.x + x, canvas.width - 1);
+                        const segY = Math.min(roi.y + y, canvas.height - 1);
+                        const segIndex = segY * canvas.width + segX;
+                        const isBody = segmentation.data[segIndex] === 1;
+                        mask[y * roi.width + x] = isBody ? 255 : 0;
+                        bodyPixelCount += isBody ? 1 : 0;
+                    }
+                }
+                
+                // Check if we have enough body pixels
+                if (bodyPixelCount < (roi.width * roi.height * 0.1)) {
+                    signalQuality.strength = 0;
+                    updateSignalQualityDisplay();
+                    return;
+                }
+                
+                // Calculate average brightness in the ROI (only on body pixels)
+                let totalBrightness = 0;
+                
+                for (let i = 0; i < imageData.data.length; i += 4) {
+                    if (mask[Math.floor(i / 4)] > 0) {
+                        const r = imageData.data[i];
+                        const g = imageData.data[i + 1];
+                        const b = imageData.data[i + 2];
+                        totalBrightness += 0.299 * r + 0.587 * g + 0.114 * b; // Weighted brightness
+                    }
+                }
+                
+                const avgBrightness = totalBrightness / bodyPixelCount;
+                
+                // Add to data points if it's time for a new sample (~10Hz)
+                if (dataPoints.length === 0 || elapsedTime - dataPoints[dataPoints.length - 1].time >= (1/sampleRate)) {
+                    // Normalize brightness to 0-1
+                    const normalizedBrightness = avgBrightness / 255;
+                    
+                    // Add to data points
+                    dataPoints.push({
+                        time: elapsedTime,
+                        value: normalizedBrightness
+                    });
+                    
+                    // Apply real-time filtering
+                    applyRealTimeFilter();
+                    
+                    // Update chart
+                    updateChart();
+                    
+                    // Calculate breath rate periodically
+                    if (dataPoints.length > sampleRate * 5) { // At least 5 seconds of data
+                        calculateBreathRate();
+                    }
+                }
+            }
+            
+            // Apply a real-time filter to the data
+            function applyRealTimeFilter() {
+                if (dataPoints.length < 3) return;
+                
+                // Reset filtered points
+                filteredPoints = [];
+                
+                // Apply moving average filter
+                const windowSize = 5;
+                for (let i = 0; i < dataPoints.length; i++) {
+                    let sum = 0;
+                    let count = 0;
+                    
+                    for (let j = Math.max(0, i - Math.floor(windowSize/2)); 
+                         j <= Math.min(dataPoints.length - 1, i + Math.floor(windowSize/2)); j++) {
+                        sum += dataPoints[j].value;
+                        count++;
+                    }
+                    
+                    filteredPoints.push({
+                        time: dataPoints[i].time,
+                        value: sum / count
+                    });
+                }
+                
+                // Detrend the signal (remove slow baseline drift)
+                if (filteredPoints.length > 10) {
+                    const baselineWindowSize = Math.min(30, Math.floor(filteredPoints.length / 3));
+                    let baseline = [];
+                    
+                    // Calculate baseline with a wider moving average
+                    for (let i = 0; i < filteredPoints.length; i++) {
+                        let sum = 0;
+                        let count = 0;
+                        
+                        for (let j = Math.max(0, i - Math.floor(baselineWindowSize/2)); 
+                             j <= Math.min(filteredPoints.length - 1, i + Math.floor(baselineWindowSize/2)); j++) {
+                            sum += filteredPoints[j].value;
+                            count++;
+                        }
+                        
+                        baseline.push(sum / count);
+                    }
+                    
+                    // Subtract baseline
+                    for (let i = 0; i < filteredPoints.length; i++) {
+                        filteredPoints[i].value = filteredPoints[i].value - baseline[i] + 0.5;
+                    }
+                }
+                
+                // Normalize the filtered signal to enhance peaks
+                normalizeSignal(filteredPoints);
+            }
+            
+            // Normalize signal to 0-1 range
+            function normalizeSignal(points) {
+                if (points.length < 2) return;
+                
+                // Find min and max
+                let min = points[0].value;
+                let max = points[0].value;
+                
+                for (let i = 1; i < points.length; i++) {
+                    min = Math.min(min, points[i].value);
+                    max = Math.max(max, points[i].value);
+                }
+                
+                // Normalize
+                const range = max - min;
+                if (range > 0.001) { // Avoid division by very small numbers
+                    for (let i = 0; i < points.length; i++) {
+                        points[i].value = (points[i].value - min) / range;
+                    }
+                }
+            }
+            
+            // Update the chart with the latest data
+            function updateChart() {
+                if (dataPoints.length === 0) return;
+                
+                // Update labels (time axis)
+                const labels = dataPoints.map(point => point.time.toFixed(1));
+                breathChart.data.labels = labels;
+                
+                // Update raw data
+                breathChart.data.datasets[0].data = dataPoints.map(point => point.value);
+                
+                // Update filtered data
+                breathChart.data.datasets[1].data = filteredPoints.map(point => point.value);
+                
+                // Update peaks if available
+                if (breathChart.data.datasets[2].data.length > 0) {
+                    breathChart.data.datasets[2].data = breathChart.data.datasets[2].data.filter(peak => {
+                        return peak.x <= dataPoints[dataPoints.length - 1].time;
+                    });
+                }
+                
+                // Set y-axis limits
+                breathChart.options.scales.y.min = 0;
+                breathChart.options.scales.y.max = 1;
+                
+                // Set x-axis limits
+                const timeRange = 20; // Show last 20 seconds
+                if (dataPoints.length > timeRange * sampleRate) {
+                    const minTime = dataPoints[dataPoints.length - 1].time - timeRange;
+                    breathChart.options.scales.x.min = minTime;
+                    breathChart.options.scales.x.max = dataPoints[dataPoints.length - 1].time;
+                }
+                
+                breathChart.update();
+            }
+            
+            // Calculate breath rate from the signal
+            async function calculateBreathRate() {
+                if (filteredPoints.length < sampleRate * 5) return; // Need at least 5 seconds of data
+                
+                // Take the last 20 seconds of data or all data if less than 20 seconds
+                const duration = Math.min(20, filteredPoints[filteredPoints.length - 1].time);
+                const cutoffTime = filteredPoints[filteredPoints.length - 1].time - duration;
+                const recentPoints = filteredPoints.filter(p => p.time >= cutoffTime);
+                
+                // Skip if not enough points
+                if (recentPoints.length < sampleRate * 5) return;
+                
+                // Find peaks in the filtered signal
+                const peaks = findPeaks(recentPoints);
+                
+                // Calculate average interval between peaks
+                if (peaks.length >= 2) {
+                    const intervals = [];
+                    for (let i = 1; i < peaks.length; i++) {
+                        intervals.push(peaks[i].time - peaks[i-1].time);
+                    }
+                    
+                    // Filter out obviously wrong intervals (too short)
+                    const validIntervals = intervals.filter(interval => interval > (60 / maxBreathRate));
+                    
+                    if (validIntervals.length > 0) {
+                        // Calculate average interval
+                        const avgInterval = validIntervals.reduce((acc, val) => acc + val, 0) / validIntervals.length;
+                        
+                        // Convert to breath rate (breaths per minute)
+                        const breathRate = 60 / avgInterval;
+                        
+                        // Check if the breath rate is within a reasonable range
+                        if (breathRate >= minBreathRate && breathRate <= maxBreathRate) {
+                            // Calculate breath rate consistency (coefficient of variation)
+                            const stdDev = Math.sqrt(
+                                validIntervals.reduce((acc, val) => acc + Math.pow(val - avgInterval, 2), 0) / validIntervals.length
+                            );
+                            const coeffVariation = (stdDev / avgInterval) * 100;
+                            
+                            // Calculate signal-to-noise ratio
+                            const snr = calculateSignalToNoiseRatio(recentPoints, peaks);
+                            
+                            // Calculate overall confidence
+                            let confidence = 0;
+                            
+                            // More peaks = better confidence
+                            const peakFactor = Math.min(1, peaks.length / 4); // At least 4 peaks for full confidence
+                            
+                            // Better consistency = better confidence
+                            const consistencyFactor = Math.max(0, 1 - (coeffVariation / 50));
+                            
+                            // Better SNR = better confidence
+                            const snrFactor = Math.min(1, snr / 5);
+                            
+                            // Combined confidence score
+                            confidence = Math.round((peakFactor * 0.3 + consistencyFactor * 0.4 + snrFactor * 0.3) * 100);
+                            
+                            // Update signal quality metrics
+                            signalQuality.strength = Math.min(1, snr / 10);
+                            signalQuality.noise = Math.max(0, Math.min(1, coeffVariation / 50));
+                            signalQuality.consistency = consistencyFactor;
+                            
+                            // Update displays
+                            lastBreathRate = Math.round(breathRate * 10) / 10;
+                            lastConfidence = confidence;
+                            breathRateDisplay.textContent = lastBreathRate;
+                            confidenceDisplay.textContent = `${confidence}%`;
+                            
+                            // Update confidence indicator color
+                            if (confidence >= 70) {
+                                confidenceIndicator.className = 'confidence-indicator bg-success';
+                            } else if (confidence >= 40) {
+                                confidenceIndicator.className = 'confidence-indicator bg-warning';
+                            } else {
+                                confidenceIndicator.className = 'confidence-indicator bg-danger';
+                            }
+                            
+                            // Show warning if confidence is low
+                            if (confidence < 40) {
+                                showWarning("Low confidence in measurement. Try to sit still and breathe normally.");
+                            } else {
+                                hideWarning();
+                            }
+                            
+                            // Update signal quality display
+                            updateSignalQualityDisplay();
+                            
+                            // Update breathe peaks on chart
+                            breathChart.data.datasets[2].data = peaks.map(peak => ({
+                                x: peak.time,
+                                y: peak.value
+                            }));
+                            
+                            // Update chart
+                            breathChart.update();
+                        }
+                    }
+                }
+            }
+            
+            // Find peaks in the signal
+            function findPeaks(points) {
+                const peaks = [];
+                const minPeakDistance = 60 / maxBreathRate; // Minimum seconds between peaks
+                const threshold = 0.6; // Peak threshold (0-1)
+                
+                // Need at least 3 points to find peaks
+                if (points.length < 3) return peaks;
+                
+                // Find local maxima
+                for (let i = 1; i < points.length - 1; i++) {
+                    if (points[i].value > threshold && 
+                        points[i].value > points[i-1].value && 
+                        points[i].value > points[i+1].value) {
+                        
+                        // Check if it's far enough from the last peak
+                        if (peaks.length === 0 || (points[i].time - peaks[peaks.length - 1].time) >= minPeakDistance) {
+                            peaks.push(points[i]);
+                        } else if (points[i].value > peaks[peaks.length - 1].value) {
+                            // Replace the last peak if this one is higher
+                            peaks[peaks.length - 1] = points[i];
+                        }
+                    }
+                }
+                
+                return peaks;
+            }
+            
+            // Calculate signal-to-noise ratio
+            function calculateSignalToNoiseRatio(points, peaks) {
+                if (points.length < 3 || peaks.length < 2) return 0;
+                
+                // Calculate average peak height
+                const avgPeakHeight = peaks.reduce((sum, peak) => sum + peak.value, 0) / peaks.length;
+                
+                // Calculate average signal level
+                const avgSignal = points.reduce((sum, point) => sum + point.value, 0) / points.length;
+                
+                // Calculate signal variance (noise)
+                const variance = points.reduce((sum, point) => sum + Math.pow(point.value - avgSignal, 2), 0) / points.length;
+                const standardDeviation = Math.sqrt(variance);
+                
+                // Return SNR
+                return standardDeviation > 0 ? (avgPeakHeight - avgSignal) / standardDeviation : 0;
+            }
+            
+            // Update progress bar
+            function updateProgress(percent) {
+                progressBar.style.width = `${percent}%`;
+                progressText.textContent = `${Math.round(percent)}%`;
+            }
+            
+            // Update signal quality display
+            function updateSignalQualityDisplay() {
+                // Signal strength
+                signalStrengthBar.style.width = `${signalQuality.strength * 100}%`;
+                if (signalQuality.strength > 0.7) {
+                    signalStrengthText.textContent = "Strong";
+                    signalStrengthBar.className = "progress-bar bg-success";
+                } else if (signalQuality.strength > 0.3) {
+                    signalStrengthText.textContent = "Moderate";
+                    signalStrengthBar.className = "progress-bar bg-warning";
+                } else {
+                    signalStrengthText.textContent = "Weak";
+                    signalStrengthBar.className = "progress-bar bg-danger";
+                }
+                
+                // Noise level
+                noiseLevelBar.style.width = `${signalQuality.noise * 100}%`;
+                if (signalQuality.noise < 0.3) {
+                    noiseLevelText.textContent = "Low";
+                    noiseLevelBar.className = "progress-bar bg-success";
+                } else if (signalQuality.noise < 0.7) {
+                    noiseLevelText.textContent = "Medium";
+                    noiseLevelBar.className = "progress-bar bg-warning";
+                } else {
+                    noiseLevelText.textContent = "High";
+                    noiseLevelBar.className = "progress-bar bg-danger";
+                }
+                
+                // Consistency
+                consistencyBar.style.width = `${signalQuality.consistency * 100}%`;
+                if (signalQuality.consistency > 0.7) {
+                    consistencyText.textContent = "Good";
+                    consistencyBar.className = "progress-bar bg-success";
+                } else if (signalQuality.consistency > 0.3) {
+                    consistencyText.textContent = "Fair";
+                    consistencyBar.className = "progress-bar bg-warning";
+                } else {
+                    consistencyText.textContent = "Poor";
+                    consistencyBar.className = "progress-bar bg-danger";
+                }
+            }
+            
+            // Reset signal quality
+            function resetSignalQuality() {
+                signalQuality = {
+                    strength: 0,
+                    noise: 0,
+                    consistency: 0
+                };
+                updateSignalQualityDisplay();
+            }
+            
+            // Show warning message
+            function showWarning(message) {
+                warningMessage.textContent = message;
+                warningAlert.style.display = 'block';
+            }
+            
+            // Hide warning message
+            function hideWarning() {
+                warningAlert.style.display = 'none';
+            }
+            
+            // Stop tracking
+            function stopTracking() {
+                isTracking = false;
+                
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+                
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                    stream = null;
+                }
+                
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                
+                // If we have enough data, finalize the chart
+                if (dataPoints.length > 0 && filteredPoints.length > 0) {
+                    const filteredDataPoints = dataPoints.filter(point => point.time <= trackingDuration);
+                    breathChart.data.labels = filteredDataPoints.map(point => point.time.toFixed(1));
+                    breathChart.options.scales.x.min = 0;
+                    breathChart.options.scales.x.max = trackingDuration;
+                    breathChart.update();
+                }
+            }
+            
+            // Start loading the model
+            loadModel();
+        });
+    </script>
+</body>
+</html>
